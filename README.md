@@ -83,6 +83,29 @@ Logs for the automatic updates are stored in:
 - Homebrew installed (https://brew.sh)
 - Admin privileges (for initial setup only)
 
+## Testing
+
+The project includes a comprehensive test suite to verify functionality:
+
+```bash
+# Run all tests
+./run_tests.sh
+
+# Or run individual test components
+./test/test_brew_manager.sh    # Unit tests
+./test/test_github_update.sh   # GitHub update functionality test
+./test/functional_test.sh      # End-to-end functional test
+```
+
+These tests ensure that:
+- Password storage in Keychain works correctly
+- Sudo permissions are properly configured
+- Brew autoupdate setup functions as expected  
+- GitHub repository updates are fetched correctly
+- Crontab renewal entries are created properly
+
+The tests use mock commands to simulate system interactions without making actual changes to your system.
+
 ## License
 
 MIT
