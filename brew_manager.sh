@@ -1,7 +1,25 @@
 #!/bin/zsh
 # brew_manager.sh - All-in-one Homebrew Auto-update Manager with Keychain integration
 # Created: May 11, 2025
-# Author: Omar's Assista
+# Author: Omar
+
+# Ensure the script is in the ~/bin directory
+script_full_path=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+target_path="$HOME/bin/$(basename "$0")"
+
+# Check if we need to copy the script to ~/bin
+if [[ "$script_full_path" != "$target_path" ]]; then
+  echo "Moving script to ~/bin directory..."
+  mkdir -p "$HOME/bin"
+  cp "$script_full_path" "$target_path"
+  chmod +x "$target_path"
+  echo "Script copied to $target_path"
+  echo "Executing from the new location..."
+  
+  # Execute the script from its new location and pass any arguments
+  exec "$target_path" "$@"
+  # The exec command replaces the current process, so this line will never be reached
+fi
 
 # Make sure we're in a safe directory
 cd "$HOME" || exit 1
@@ -15,6 +33,28 @@ RENEWAL_DAYS=90        # Renew configuration every 90 days
 # Check if the first argument is "askpass" to provide the keychain password
 if [[ "$1" == "askpass" ]]; then
   security find-generic-password -s "$KEYCHAIN_SERVICE" -a "$KEYCHAIN_ACCOUNT" -w
+  exit $?
+fi
+
+# Function to run the actual brew update process
+run_brew_update() {
+  echo "Starting Homebrew update process at $(date)"
+  
+  # Export the SUDO_ASKPASS for any sudo calls
+  export SUDO_ASKPASS="$(dirname "$0")/$(basename "$0") askpass"
+  
+  # Run the actual brew commands with error handling
+  /opt/homebrew/bin/brew update || echo "Error during brew update"
+  /opt/homebrew/bin/brew upgrade --formula || echo "Error during brew formula upgrade"
+  /opt/homebrew/bin/brew upgrade --cask || echo "Error during brew cask upgrade"
+  /opt/homebrew/bin/brew cleanup || echo "Error during brew cleanup"
+  
+  echo "Homebrew update completed at $(date)"
+}
+
+# Check if the script was called to run update
+if [[ "$1" == "run_update" ]]; then
+  run_brew_update
   exit $?
 fi
 
@@ -101,9 +141,8 @@ setup_brew_autoupdate() {
     <string>com.omar.homebrew-autoupdate</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/sh</string>
-        <string>-c</string>
-        <string>/opt/homebrew/bin/brew update && /opt/homebrew/bin/brew upgrade --formula && /opt/homebrew/bin/brew upgrade --cask && /opt/homebrew/bin/brew cleanup</string>
+        <string>$script_path</string>
+        <string>run_update</string>
     </array>
     <key>RunAtLoad</key>
     <false/>
@@ -120,6 +159,10 @@ setup_brew_autoupdate() {
         <key>SUDO_ASKPASS</key>
         <string>${askpass_path}</string>
     </dict>
+    <key>ServiceDescription</key>
+    <string>Homebrew Package Auto-Update</string>
+    <key>ProcessType</key>
+    <string>Standard</string>
 </dict>
 </plist>
 EOL
