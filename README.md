@@ -8,7 +8,7 @@ A comprehensive solution to automate Homebrew updates on macOS with security in 
 
 - **Secure Password Management**: Uses macOS Keychain to securely store sudo credentials
 - **Automated Updates**: Configures Homebrew to update formulae and casks automatically
-- **Self-renewal**: Maintains its own configuration with periodic renewal
+- **Self-renewal**: Maintains its own configuration with periodic renewal and updates from the main repository
 - **Smart Integration**: Works seamlessly with macOS launch agents
 - **User-friendly**: Simple one-time setup process
 
@@ -18,7 +18,7 @@ Simply download and run the script:
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/brew-manager.git
+git clone https://github.com/omar391/brew-manager.git
 cd brew-manager
 
 # Make the script executable
@@ -55,7 +55,12 @@ By default, Homebrew will be updated every 12 hours. The update process includes
 
 ### Configuration Renewal
 
-To ensure continued proper function, the script schedules its own renewal every 90 days. This maintains fresh configurations and adapts to any system changes.
+To ensure continued proper function, the script schedules its own renewal every 90 days. During renewal, it will:
+- Pull the latest version from the [official repository](https://github.com/omar391/brew-manager)
+- Update its configurations to incorporate any improvements
+- Reset the renewal timer for another 90 days
+
+This maintains fresh configurations and adapts to any system changes or updates to the tool itself.
 
 ## Customization
 

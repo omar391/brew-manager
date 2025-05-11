@@ -32,6 +32,7 @@ KEYCHAIN_SERVICE="BrewAutoUpdate"
 KEYCHAIN_ACCOUNT="${USER}"
 UPDATE_INTERVAL=43200  # 12 hours in seconds
 RENEWAL_DAYS=90        # Renew configuration every 90 days
+GITHUB_REPO="https://github.com/omar391/brew-manager"  # Official repository URL
 
 # Check if the first argument is "askpass" to provide the keychain password
 if [[ "${1}" == "askpass" ]]; then
@@ -220,13 +221,59 @@ schedule_renewal() {
   # Remove any existing crontab entry for this script
   crontab -l 2>/dev/null | grep -v "${script_path}" | crontab -
   
-  # Add new entry to run this script in 90 days
+  # Create a renewal script that will pull the latest version from GitHub
+  local renewal_script="${HOME}/bin/brew_manager_renewal.sh"
+  cat > "${renewal_script}" << EOL
+#!/bin/bash
+# Renewal script for brew_manager.sh
+# This script pulls the latest version from GitHub and updates the local copy
+
+# Target directory and file
+BIN_DIR="\${HOME}/bin"
+SCRIPT_NAME="brew_manager.sh"
+TARGET_PATH="\${BIN_DIR}/\${SCRIPT_NAME}"
+
+# GitHub repository URL
+REPO_URL="${GITHUB_REPO}"
+
+# Create a temporary directory
+TEMP_DIR=\$(mktemp -d)
+cd "\${TEMP_DIR}" || exit 1
+
+# Clone the repository
+echo "Pulling latest version from \${REPO_URL}..."
+git clone "\${REPO_URL}" ./brew-manager
+if [[ \$? -ne 0 ]]; then
+  echo "Failed to clone repository. Using existing script."
+  rm -rf "\${TEMP_DIR}"
+  "\${TARGET_PATH}"
+  exit 1
+fi
+
+# Copy the updated script
+echo "Updating brew_manager script..."
+mkdir -p "\${BIN_DIR}"
+cp ./brew-manager/brew_manager.sh "\${TARGET_PATH}"
+chmod +x "\${TARGET_PATH}"
+
+# Clean up
+rm -rf "\${TEMP_DIR}"
+
+# Run the updated script
+echo "Running updated script..."
+"\${TARGET_PATH}"
+EOL
+  
+  # Make the renewal script executable
+  chmod +x "${renewal_script}"
+  
+  # Add new entry to run the renewal script in specified days
   # Split command to avoid masking return values
   local renewal_date
   renewal_date=$(date -v+${RENEWAL_DAYS}d "+%d %m *")
-  (crontab -l 2>/dev/null; echo "0 0 ${renewal_date} ${script_path}") | crontab -
+  (crontab -l 2>/dev/null; echo "0 0 ${renewal_date} ${renewal_script}") | crontab -
   
-  echo "Renewal scheduled."
+  echo "Renewal scheduled with auto-update from GitHub repository."
 }
 
 # Main function
@@ -252,6 +299,7 @@ main() {
   echo "=== Setup Complete ==="
   echo "Homebrew will now update automatically every $((UPDATE_INTERVAL / 3600)) hours."
   echo "This configuration will automatically renew in ${RENEWAL_DAYS} days."
+  echo "During renewal, the latest version will be pulled from ${GITHUB_REPO}"
 }
 
 # If not used as askpass, run the main function
