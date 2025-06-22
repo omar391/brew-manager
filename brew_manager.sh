@@ -45,12 +45,7 @@ run_brew_update() {
   echo "Starting Homebrew update process at $(date)"
   
   # Export the SUDO_ASKPASS for any sudo calls
-  local askpass_script
-  # Split command to avoid masking return values
-  local dir
-  dir="$(dirname "$0")"
-  askpass_script="${dir}/$(basename "$0") askpass"
-  export SUDO_ASKPASS="${askpass_script}"
+  export SUDO_ASKPASS="${HOME}/bin/brew_askpass"
   
   # Run the actual brew commands with error handling
   /opt/homebrew/bin/brew update || echo "Error during brew update"
@@ -135,14 +130,20 @@ setup_brew_autoupdate() {
   local script_path="${HOME}/bin/brew_manager.sh"
   echo "Using script path: ${script_path}"
   
+  # Create askpass wrapper script
+  local askpass_wrapper="${HOME}/bin/brew_askpass"
+  cat > "${askpass_wrapper}" << ASKPASS_EOF
+#!/bin/bash
+# Simple askpass wrapper for brew_manager.sh
+${script_path} askpass
+ASKPASS_EOF
+  chmod +x "${askpass_wrapper}"
+
   # Set up our SUDO_ASKPASS variable for startup
-  export SUDO_ASKPASS="${script_path} askpass"
+  export SUDO_ASKPASS="${askpass_wrapper}"
   
   # Create a special launchd plist that sets our SUDO_ASKPASS
   local plist_path="${HOME}/Library/LaunchAgents/com.omar.homebrew-autoupdate.plist"
-  
-  # Ensure script_path is correctly set for the plist
-  local askpass_path="${script_path} askpass"
   
   cat > "${plist_path}" << EOL
 <?xml version="1.0" encoding="UTF-8"?>
@@ -169,7 +170,7 @@ setup_brew_autoupdate() {
         <key>PATH</key>
         <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>SUDO_ASKPASS</key>
-        <string>${askpass_path}</string>
+        <string>${askpass_wrapper}</string>
     </dict>
     <key>ServiceDescription</key>
     <string>Homebrew Package Auto-Update</string>
@@ -193,15 +194,10 @@ EOL
 add_to_profile() {
   echo "Adding to shell profile..."
   
-  # Add SUDO_ASKPASS to .zshrc with absolute path
-  local script_path
-  # Split command to avoid masking return values
-  cd "$(dirname "$0")" || exit 1
-  local current_dir
-  current_dir=$(pwd)
-  script_path="${current_dir}/$(basename "$0")"
-  if ! grep -q "SUDO_ASKPASS=\"${script_path} askpass\"" ~/.zshrc; then
-    echo "export SUDO_ASKPASS=\"${script_path} askpass\"" >> ~/.zshrc
+  # Add SUDO_ASKPASS to .zshrc with wrapper script path
+  local askpass_wrapper="${HOME}/bin/brew_askpass"
+  if ! grep -q "SUDO_ASKPASS=\"${askpass_wrapper}\"" ~/.zshrc; then
+    echo "export SUDO_ASKPASS=\"${askpass_wrapper}\"" >> ~/.zshrc
     echo "Added SUDO_ASKPASS to ~/.zshrc"
   fi
 }
