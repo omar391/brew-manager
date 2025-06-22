@@ -44,6 +44,9 @@ fi
 run_brew_update() {
   echo "Starting Homebrew update process at $(date)"
   
+  # Clean up old logs before starting
+  cleanup_old_logs
+  
   # Export the SUDO_ASKPASS for any sudo calls
   export SUDO_ASKPASS="${HOME}/bin/brew_askpass"
   
@@ -56,10 +59,117 @@ run_brew_update() {
   echo "Homebrew update completed at $(date)"
 }
 
+# Function to clean up old log files
+cleanup_old_logs() {
+  echo "Cleaning up old log files..."
+  
+  local log_dir="${HOME}/Library/Logs/Homebrew"
+  local max_log_size_mb=50  # Maximum size per log file in MB
+  local max_log_age_days=30 # Keep logs for 30 days
+  local max_rotated_logs=5  # Keep this many rotated log files
+  
+  # Check if log directory exists
+  if [[ ! -d "${log_dir}" ]]; then
+    echo "Log directory not found: ${log_dir}"
+    return 0
+  fi
+  
+  # Function to rotate a log file
+  rotate_log_file() {
+    local log_file="$1"
+    local base_name
+    base_name=$(basename "${log_file}")
+    
+    if [[ ! -f "${log_file}" ]]; then
+      return 0
+    fi
+    
+    # Get file size in MB
+    local file_size_mb
+    file_size_mb=$(stat -f%z "${log_file}" 2>/dev/null | awk '{print int($1/1024/1024)}')
+    
+    if [[ ${file_size_mb} -gt ${max_log_size_mb} ]]; then
+      echo "Rotating large log file: ${log_file} (${file_size_mb}MB)"
+      
+      # Rotate existing numbered logs
+      for ((i=max_rotated_logs-1; i>=1; i--)); do
+        if [[ -f "${log_file}.${i}" ]]; then
+          mv "${log_file}.${i}" "${log_file}.$((i+1))"
+        fi
+      done
+      
+      # Move current log to .1
+      mv "${log_file}" "${log_file}.1"
+      
+      # Create new empty log file
+      touch "${log_file}"
+      
+      # Remove old rotated logs beyond the limit
+      for ((i=max_rotated_logs+1; i<=10; i++)); do
+        [[ -f "${log_file}.${i}" ]] && rm -f "${log_file}.${i}"
+      done
+      
+      echo "Log file rotated successfully"
+    fi
+  }
+  
+  # Rotate log files if they're too large
+  rotate_log_file "${log_dir}/autoupdate.log"
+  rotate_log_file "${log_dir}/autoupdate.err"
+  
+  # Clean up old rotated log files by age
+  find "${log_dir}" -name "autoupdate.log.*" -mtime +${max_log_age_days} -delete 2>/dev/null || true
+  find "${log_dir}" -name "autoupdate.err.*" -mtime +${max_log_age_days} -delete 2>/dev/null || true
+  
+  # Display current log file sizes
+  for log_file in "${log_dir}/autoupdate.log" "${log_dir}/autoupdate.err"; do
+    if [[ -f "${log_file}" ]]; then
+      local size_kb
+      size_kb=$(stat -f%z "${log_file}" 2>/dev/null | awk '{print int($1/1024)}')
+      echo "Current log size: $(basename "${log_file}") - ${size_kb}KB"
+    fi
+  done
+  
+  echo "Log cleanup completed"
+}
+
 # Check if the script was called to run update
 if [[ "${1}" == "run_update" ]]; then
   run_brew_update
   exit ${?}
+fi
+
+# Check if the script was called to clean logs
+if [[ "${1}" == "clean_logs" ]]; then
+  cleanup_old_logs
+  exit ${?}
+fi
+
+# Check if the script was called with help
+if [[ "${1}" == "help" ]] || [[ "${1}" == "--help" ]] || [[ "${1}" == "-h" ]]; then
+  echo "=== Homebrew Auto-update Manager - Help ==="
+  echo
+  echo "Usage: $0 [COMMAND]"
+  echo
+  echo "Commands:"
+  echo "  (no args)    - Install/setup auto-update system"
+  echo "  run_update   - Manually run brew update process"
+  echo "  clean_logs   - Clean up and rotate old log files"
+  echo "  help         - Show this help message"
+  echo
+  echo "Log Management:"
+  echo "  📁 Location: ~/Library/Logs/Homebrew/"
+  echo "  🔄 Auto-rotation: Files >50MB"
+  echo "  📊 Retention: 5 rotated files, 30 days max age"
+  echo
+  echo "Configuration:"
+  echo "  🕐 Update interval: $((UPDATE_INTERVAL / 3600)) hours"
+  echo "  🔄 Auto-renewal: Every ${RENEWAL_DAYS} days"
+  echo "  📂 Installation: ~/bin/brew_manager.sh"
+  echo
+  echo "Uninstall:"
+  echo "  Run './uninstall.sh' to completely remove all components"
+  exit 0
 fi
 
 # Function to store password in keychain (only needed once)
@@ -73,21 +183,46 @@ store_password_in_keychain() {
     return 0
   fi
   
-  # Prompt for password
-  echo -n "Enter your sudo password: "
-  read -rs password
-  echo
-  
-  # Verify password works
-  if echo "${password}" | sudo -S echo "Password verified" &>/dev/null; then
-    # Store in keychain
-    security add-generic-password -s "${KEYCHAIN_SERVICE}" -a "${KEYCHAIN_ACCOUNT}" -w "${password}"
-    echo "Password stored securely in Keychain."
-    return 0
-  else
-    echo "Incorrect password. Please try again."
+  # Function to get and verify password
+  get_and_verify_password() {
+    local password
+    local attempts=0
+    local max_attempts=3
+    
+    while [[ $attempts -lt $max_attempts ]]; do
+      # Clear any existing sudo timestamp to ensure fresh authentication
+      sudo -k 2>/dev/null || true
+      
+      echo -n "Enter your sudo password: "
+      read -rs password
+      echo
+      
+      # Verify password works with a timeout and proper error handling
+      if timeout 10 bash -c "echo '$password' | sudo -S -v" &>/dev/null; then
+        # Store in keychain
+        if security add-generic-password -s "${KEYCHAIN_SERVICE}" -a "${KEYCHAIN_ACCOUNT}" -w "${password}" 2>/dev/null; then
+          echo "Password stored securely in Keychain."
+          return 0
+        else
+          echo "Error: Failed to store password in Keychain."
+          return 1
+        fi
+      else
+        attempts=$((attempts + 1))
+        if [[ $attempts -lt $max_attempts ]]; then
+          echo "Incorrect password. Please try again. (Attempt $attempts/$max_attempts)"
+        else
+          echo "Too many failed attempts. Please run the script again."
+          return 1
+        fi
+      fi
+    done
+    
     return 1
-  fi
+  }
+  
+  # Call the verification function
+  get_and_verify_password
 }
 
 # Function to configure sudo for brew
@@ -99,21 +234,54 @@ configure_sudo() {
   tmpfile=$(mktemp)
   echo "${USER} ALL=(ALL) NOPASSWD: /opt/homebrew/bin/brew upgrade*, /opt/homebrew/bin/brew cleanup" > "${tmpfile}"
   
-  # Get password from keychain
+  # Get password from keychain with error handling
   local password
-  password=$(security find-generic-password -s "${KEYCHAIN_SERVICE}" -a "${KEYCHAIN_ACCOUNT}" -w)
+  if ! password=$(security find-generic-password -s "${KEYCHAIN_SERVICE}" -a "${KEYCHAIN_ACCOUNT}" -w 2>/dev/null); then
+    echo "Error: Could not retrieve password from keychain."
+    rm "${tmpfile}"
+    return 1
+  fi
+  
+  # Verify password works before proceeding
+  if ! echo "${password}" | sudo -S -v &>/dev/null; then
+    echo "Error: Stored password is no longer valid. Please re-run setup."
+    security delete-generic-password -s "${KEYCHAIN_SERVICE}" -a "${KEYCHAIN_ACCOUNT}" 2>/dev/null || true
+    rm "${tmpfile}"
+    return 1
+  fi
   
   # Apply sudo config
-  echo "${password}" | sudo -S cp "${tmpfile}" /etc/sudoers.d/homebrew
-  echo "${password}" | sudo -S chmod 440 /etc/sudoers.d/homebrew
+  if ! echo "${password}" | sudo -S cp "${tmpfile}" /etc/sudoers.d/homebrew; then
+    echo "Error: Failed to apply sudo configuration."
+    rm "${tmpfile}"
+    return 1
+  fi
+  
+  if ! echo "${password}" | sudo -S chmod 440 /etc/sudoers.d/homebrew; then
+    echo "Error: Failed to set sudo configuration permissions."
+    rm "${tmpfile}"
+    return 1
+  fi
+  
   rm "${tmpfile}"
   
   # Set sudo timeout
   local timeout_file
   timeout_file=$(mktemp)
   echo "Defaults:${USER} timestamp_timeout=7200" > "${timeout_file}"
-  echo "${password}" | sudo -S cp "${timeout_file}" /etc/sudoers.d/homebrew_timeout
-  echo "${password}" | sudo -S chmod 440 /etc/sudoers.d/homebrew_timeout
+  
+  if ! echo "${password}" | sudo -S cp "${timeout_file}" /etc/sudoers.d/homebrew_timeout; then
+    echo "Error: Failed to apply sudo timeout configuration."
+    rm "${timeout_file}"
+    return 1
+  fi
+  
+  if ! echo "${password}" | sudo -S chmod 440 /etc/sudoers.d/homebrew_timeout; then
+    echo "Error: Failed to set sudo timeout configuration permissions."
+    rm "${timeout_file}"
+    return 1
+  fi
+  
   rm "${timeout_file}"
   
   echo "Sudo configuration complete."
@@ -296,6 +464,12 @@ main() {
   echo "Homebrew will now update automatically every $((UPDATE_INTERVAL / 3600)) hours."
   echo "This configuration will automatically renew in ${RENEWAL_DAYS} days."
   echo "During renewal, the latest version will be pulled from ${GITHUB_REPO}"
+  echo
+  echo "Log Management:"
+  echo "  📁 Logs location: ~/Library/Logs/Homebrew/"
+  echo "  🔄 Automatic cleanup: Files >50MB will be rotated"
+  echo "  🗑️  Manual cleanup: Run '~/bin/brew_manager.sh clean_logs'"
+  echo "  📊 Log retention: 5 rotated files, 30 days max age"
 }
 
 # If not used as askpass, run the main function
