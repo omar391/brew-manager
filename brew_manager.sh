@@ -51,9 +51,42 @@ run_brew_update() {
   export SUDO_ASKPASS="${HOME}/bin/brew_askpass"
   
   # Run the actual brew commands with error handling
+  echo "Updating Homebrew..."
   /opt/homebrew/bin/brew update || echo "Error during brew update"
+  
+  echo "Upgrading formulae..."
   /opt/homebrew/bin/brew upgrade --formula || echo "Error during brew formula upgrade"
-  /opt/homebrew/bin/brew upgrade --cask || echo "Error during brew cask upgrade"
+  
+  echo "Upgrading casks..."
+  # Try regular upgrade first
+  if ! /opt/homebrew/bin/brew upgrade --cask; then
+    echo "Regular cask upgrade failed, attempting to fix corrupted casks..."
+    
+    # Get list of outdated casks
+    local outdated_casks
+    outdated_casks=$(/opt/homebrew/bin/brew outdated --cask --quiet 2>/dev/null || true)
+    
+    if [[ -n "${outdated_casks}" ]]; then
+      echo "Attempting to fix outdated casks: ${outdated_casks}"
+      
+      # Try to upgrade each cask individually with --force
+      while IFS= read -r cask; do
+        if [[ -n "${cask}" ]]; then
+          echo "Attempting to fix cask: ${cask}"
+          if ! /opt/homebrew/bin/brew upgrade --cask --force "${cask}" 2>/dev/null; then
+            echo "Failed to upgrade ${cask} with --force, trying reinstall..."
+            /opt/homebrew/bin/brew uninstall --cask --force "${cask}" 2>/dev/null || true
+            /opt/homebrew/bin/brew install --cask "${cask}" 2>/dev/null || echo "Failed to reinstall ${cask}"
+          fi
+        fi
+      done <<< "${outdated_casks}"
+    else
+      echo "No outdated casks found, but upgrade failed. Trying with --force..."
+      /opt/homebrew/bin/brew upgrade --cask --force || echo "Error during brew cask upgrade (even with --force)"
+    fi
+  fi
+  
+  echo "Cleaning up..."
   /opt/homebrew/bin/brew cleanup || echo "Error during brew cleanup"
   
   echo "Homebrew update completed at $(date)"
@@ -77,8 +110,6 @@ cleanup_old_logs() {
   # Function to rotate a log file
   rotate_log_file() {
     local log_file="$1"
-    local base_name
-    base_name=$(basename "${log_file}")
     
     if [[ ! -f "${log_file}" ]]; then
       return 0
@@ -289,10 +320,7 @@ configure_sudo() {
 
 # Function to set up brew autoupdate
 setup_brew_autoupdate() {
-  echo "Setting up brew autoupdate..."
-  
-  # First delete any existing configuration
-  brew autoupdate delete
+  echo "Setting up custom brew autoupdate system..."
   
   # Use the hardcoded path to this script to avoid directory issues
   local script_path="${HOME}/bin/brew_manager.sh"
@@ -355,7 +383,7 @@ EOL
   launchctl unload "${plist_path}" 2>/dev/null || true
   launchctl load -w "${plist_path}"
   
-  echo "Custom brew autoupdate configured via launchd."
+  echo "Custom brew autoupdate system configured via launchd."
 }
 
 # Function to add script to user profile
@@ -461,7 +489,8 @@ main() {
   schedule_renewal
   
   echo "=== Setup Complete ==="
-  echo "Homebrew will now update automatically every $((UPDATE_INTERVAL / 3600)) hours."
+  echo "Custom Homebrew autoupdate system configured to run every $((UPDATE_INTERVAL / 3600)) hours."
+  echo "This works alongside any existing Homebrew autoupdate configuration."
   echo "This configuration will automatically renew in ${RENEWAL_DAYS} days."
   echo "During renewal, the latest version will be pulled from ${GITHUB_REPO}"
   echo

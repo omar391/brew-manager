@@ -90,12 +90,21 @@ This script uses macOS Keychain to securely store your sudo password with enterp
 
 ### 🚀 Automatic Updates
 
-By default, Homebrew will be updated every 12 hours via launchd. The update process includes:
+This system provides enhanced Homebrew updates every 12 hours via launchd, working alongside any existing Homebrew autoupdate configuration.
+
+The update process includes:
 - Updating Homebrew itself (`brew update`)
 - Upgrading installed formulae (`brew upgrade --formula`)
 - Upgrading installed casks (`brew upgrade --cask`)
 - Cleaning up outdated versions (`brew cleanup`)
 - Automatic log rotation and cleanup
+
+**Enhanced features over built-in autoupdate:**
+- Secure password management via Keychain
+- Comprehensive error handling and logging
+- Log rotation and cleanup
+- User feedback and status reporting
+- Integration with our renewal system
 
 ### 📊 Log Management
 
